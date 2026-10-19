@@ -52,6 +52,9 @@
 #include "hms/hms_text_c/en/hms_text_config_json.h"
 #include "dji_hms.h"
 #include "positioning/test_positioning.h"
+#ifdef SYSTEM_ARCH_LINUX
+#include "whatsapp_pointing/whatsapp_pointing.h"
+#endif
 
 /* Private constants ---------------------------------------------------------*/
 #define WIDGET_DIR_PATH_LEN_MAX         (256)
@@ -738,6 +741,14 @@ static T_DjiReturnCode DjiTestWidget_SetWidgetValue(E_DjiWidgetType widgetType, 
         DjiTest_SpzSetApproachParam(s_spzSpeedMs, s_spzAngleDeg);
     }
 #endif /* SYSTEM_ARCH_LINUX */
+
+#ifdef SYSTEM_ARCH_LINUX
+    /* Widget 0 is "C3 WhatsApp". Map it to the C3 key in Pilot custom buttons. */
+    if (widgetType == DJI_WIDGET_TYPE_BUTTON && index == WHATSAPP_POINTING_RC_BUTTON_INDEX &&
+        value == DJI_WIDGET_BUTTON_STATE_PRESS_DOWN) {
+        DjiUser_SendPointingLocationToWhatsApp();
+    }
+#endif
 
     if (widgetType == DJI_WIDGET_TYPE_BUTTON && index == 10) {
         if (value == 1) {
