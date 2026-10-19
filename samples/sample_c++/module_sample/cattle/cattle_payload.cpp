@@ -323,13 +323,66 @@ void PrintStatus() {
 
 #ifdef OPEN_CV_INSTALLED
 
-std::vector<CattleDetection> DetectOnnx(const cv::Mat &bgr) {
+bool EndsWith(const std::string &text, const char *suffix) {
+    size_t length = std::strlen(suffix);
+    return text.size() >= length && text.compare(text.size() - length, length, suffix) == 0;
+}
+
+bool FileNewerOrEqual(const std::string &path, const std::string &other) {
+    struct stat left;
+    struct stat right;
+    if (stat(path.c_str(), &left) != 0 || stat(other.c_str(), &right) != 0) {
+        return false;
+    }
+    if (left.st_size <= 0) {
+        return false;
+    }
+    return left.st_mtime >= right.st_mtime;
+}
+
+bool GunzipTo(const std::string &gz_path, const std::string &dest) {
+    std::string temporary = dest + ".tmp";
+    std::string command = "gzip -dc " + ShellQuote(gz_path) + " > " + ShellQuote(temporary);
+    int status = std::system(command.c_str());
+    if (status != 0) {
+        std::remove(temporary.c_str());
+        return false;
+    }
+    if (std::rename(temporary.c_str(), dest.c_str()) != 0) {
+        std::remove(temporary.c_str());
+        return false;
+    }
+    return true;
+}
+
+std::string PrepareOnnxModel(const std::string &path) {
+    if (!EndsWith(path, ".gz")) {
+        return path;
+    }
+    std::string plain = path.substr(0, path.size() - 3);
+    if (FileNewerOrEqual(plain, path)) {
+        return plain;
+    }
+    if (GunzipTo(path, plain)) {
+        USER_LOG_INFO("Inflated cattle ONNX model to %s", plain.c_str());
+        return plain;
+    }
+    std::string fallback = g_state->config.output_dir + "/aerial_cattle_yolov8m.onnx";
+    if (FileNewerOrEqual(fallback, path)) {
+        return fallback;
+    }
+    EnsureDirectory(g_state->config.output_dir);
+    if (GunzipTo(path, fallback)) {
+        USER_LOG_INFO("Inflated cattle ONNX model to %s", fallback.c_str());
+        return fallback;
+    }
+    USER_LOG_WARN("Could not inflate %s", path.c_str());
+    return path;
+}
+
+std::vector<CattleDetection> ParseOnnxOutput(const cv::Mat &out, int input, float conf,
+                                             const std::vector<int> &class_ids) {
     std::vector<CattleDetection> found;
-    int input = g_state->config.onnx_input > 0 ? g_state->config.onnx_input : 640;
-    cv::Mat blob;
-    cv::dnn::blobFromImage(bgr, blob, 1.0 / 255.0, cv::Size(input, input), cv::Scalar(), true, false);
-    g_state->onnx.setInput(blob);
-    cv::Mat out = g_state->onnx.forward();
     if (out.empty()) {
         return found;
     }
@@ -351,8 +404,81 @@ std::vector<CattleDetection> DetectOnnx(const cv::Mat &bgr) {
         return found;
     }
     return ParseYoloV8(reinterpret_cast<const float *>(flat.ptr<float>()), num_attrs, num_boxes, channel_major,
-                       input, input, bgr.cols, bgr.rows, static_cast<float>(g_state->config.counter.min_score),
-                       g_state->config.counter.class_ids);
+                       input, input, input, input, conf, class_ids);
+}
+
+cv::Mat LetterboxCanvas(const cv::Mat &tile, const LetterboxFit &fit, int input) {
+    cv::Mat canvas(input, input, CV_8UC3, cv::Scalar(114, 114, 114));
+    if (fit.resized_w <= 0 || fit.resized_h <= 0) {
+        return canvas;
+    }
+    cv::Mat resized;
+    const cv::Mat *source = &tile;
+    if (fit.resized_w != tile.cols || fit.resized_h != tile.rows) {
+        cv::resize(tile, resized, cv::Size(fit.resized_w, fit.resized_h));
+        source = &resized;
+    }
+    int px = static_cast<int>(fit.pad_x);
+    int py = static_cast<int>(fit.pad_y);
+    source->copyTo(canvas(cv::Rect(px, py, fit.resized_w, fit.resized_h)));
+    return canvas;
+}
+
+bool AppendOnnxView(std::vector<CattleDetection> *found, const cv::Mat &view, float origin_x, float origin_y,
+                    int input, float conf, const std::vector<int> &class_ids) {
+    LetterboxFit fit = FitLetterbox(view.cols, view.rows, input);
+    cv::Mat canvas = LetterboxCanvas(view, fit, input);
+    cv::Mat blob =
+        cv::dnn::blobFromImage(canvas, 1.0 / 255.0, cv::Size(input, input), cv::Scalar(), true, false);
+    cv::Mat out;
+    try {
+        g_state->onnx.setInput(blob);
+        out = g_state->onnx.forward();
+    } catch (const cv::Exception &ex) {
+        USER_LOG_WARN("Cattle ONNX forward failed: %s", ex.what());
+        return false;
+    }
+    std::vector<CattleDetection> local = ParseOnnxOutput(out, input, conf, class_ids);
+    for (size_t i = 0; i < local.size(); ++i) {
+        MapLetterboxDetection(&local[i], fit, origin_x, origin_y);
+        found->push_back(local[i]);
+    }
+    return true;
+}
+
+std::vector<CattleDetection> DetectOnnx(const cv::Mat &bgr) {
+    std::vector<CattleDetection> found;
+    int input = g_state->config.onnx_input > 0 ? g_state->config.onnx_input : 640;
+    int stride = input * 3 / 4;
+    if (stride < 1) {
+        stride = 1;
+    }
+    float conf = static_cast<float>(g_state->config.counter.min_score);
+    const std::vector<int> &class_ids = g_state->config.counter.class_ids;
+    std::vector<int> xs = TileStarts(bgr.cols, input, stride);
+    std::vector<int> ys = TileStarts(bgr.rows, input, stride);
+    for (size_t yi = 0; yi < ys.size(); ++yi) {
+        for (size_t xi = 0; xi < xs.size(); ++xi) {
+            int x = xs[xi];
+            int y = ys[yi];
+            int w = std::min(input, bgr.cols - x);
+            int h = std::min(input, bgr.rows - y);
+            if (w <= 0 || h <= 0) {
+                continue;
+            }
+            if (!AppendOnnxView(&found, bgr(cv::Rect(x, y, w, h)), static_cast<float>(x), static_cast<float>(y),
+                                input, conf, class_ids)) {
+                return found;
+            }
+        }
+    }
+    // Tiles keep a cow at the size it has in a full nadir photo. Letterboxing
+    // the whole frame covers a tighter view, where that cow would be too large
+    // inside one tile.
+    if (bgr.cols > input || bgr.rows > input) {
+        AppendOnnxView(&found, bgr, 0.0f, 0.0f, input, conf, class_ids);
+    }
+    return found;
 }
 
 std::vector<CattleDetection> DetectCoco(const cv::Mat &bgr) {
@@ -366,13 +492,9 @@ std::vector<CattleDetection> DetectCoco(const cv::Mat &bgr) {
         g_state->logged_coco_score = true;
     }
     for (size_t i = 0; i < boxes.size(); ++i) {
-        bool allowed = g_state->config.counter.class_ids.empty();
-        for (size_t c = 0; c < g_state->config.counter.class_ids.size(); ++c) {
-            if (g_state->config.counter.class_ids[c] == boxes[i].type) {
-                allowed = true;
-            }
-        }
-        if (!allowed) {
+        // The built-in network is COCO. Class 19 is cow even when the config
+        // lists class 0 for the aerial ONNX model.
+        if (boxes[i].type != 19) {
             continue;
         }
         CattleDetection detection;
@@ -503,14 +625,20 @@ void EncoderCallback(const uint8_t *buf, uint32_t len) {
 
 bool InitDetector() {
     if (!g_state->config.onnx_model.empty()) {
-        g_state->onnx = cv::dnn::readNetFromONNX(g_state->config.onnx_model);
+        std::string model_path = PrepareOnnxModel(g_state->config.onnx_model);
+        try {
+            g_state->onnx = cv::dnn::readNetFromONNX(model_path);
+        } catch (const cv::Exception &ex) {
+            USER_LOG_WARN("Could not load %s (%s).", model_path.c_str(), ex.what());
+            g_state->onnx = cv::dnn::Net();
+        }
         if (!g_state->onnx.empty()) {
             g_state->use_onnx = true;
-            USER_LOG_INFO("Loaded cattle ONNX model %s", g_state->config.onnx_model.c_str());
+            USER_LOG_INFO("Loaded cattle ONNX model %s", model_path.c_str());
             return true;
         }
         USER_LOG_WARN("Could not load %s. Falling back to the built-in COCO cow class.",
-                      g_state->config.onnx_model.c_str());
+                      model_path.c_str());
     }
     g_state->yolo = new ImageProcessorYolovFastest("cattle");
     if (g_state->yolo->Init() != 0) {
@@ -646,7 +774,7 @@ void DjiUser_RunCattleCountSample(void) {
 
     std::cout
         << "\nCattle counter is watching the wide camera.\n"
-        << "Point the gimbal straight down and fly about 30 to 60 m above the pasture.\n"
+        << "Point the gimbal straight down and fly about 60 to 100 m above the pasture.\n"
         << "Mark the ground altitude before takeoff so the height above the herd is right.\n"
         << "[g] mark ground altitude    [s] show the count\n"
         << "[e] email the count         [r] reset the count\n"

@@ -288,6 +288,39 @@ void TestNmsAndYolo() {
     EXPECT(parsed.size() == 1);
     EXPECT(parsed[0].class_id == 1);
     EXPECT(std::fabs(parsed[0].score - 0.8f) < 0.001f);
+
+    LetterboxFit fit = FitLetterbox(2000, 1500, 640);
+    EXPECT(std::fabs(fit.scale - 0.32f) < 1e-6f);
+    EXPECT(fit.resized_w == 640);
+    EXPECT(fit.resized_h == 480);
+    EXPECT(std::fabs(fit.pad_x) < 1e-6f);
+    EXPECT(std::fabs(fit.pad_y - 80.0f) < 1e-6f);
+    CattleDetection mapped;
+    mapped.cx = 100.0f;
+    mapped.cy = 180.0f;
+    mapped.w = 32.0f;
+    mapped.h = 16.0f;
+    mapped.score = 0.5f;
+    mapped.class_id = 0;
+    MapLetterboxDetection(&mapped, fit, 480.0f, 0.0f);
+    EXPECT(std::fabs(mapped.cx - (100.0f / 0.32f + 480.0f)) < 0.01f);
+    EXPECT(std::fabs(mapped.cy - ((180.0f - 80.0f) / 0.32f)) < 0.01f);
+    EXPECT(std::fabs(mapped.w - (32.0f / 0.32f)) < 0.01f);
+    EXPECT(std::fabs(mapped.h - (16.0f / 0.32f)) < 0.01f);
+
+    std::vector<int> rows = TileStarts(1080, 640, 480);
+    EXPECT(rows.size() == 2);
+    EXPECT(rows[0] == 0);
+    EXPECT(rows[1] == 440);
+    std::vector<int> cols = TileStarts(1920, 640, 480);
+    EXPECT(cols.size() == 4);
+    EXPECT(cols[0] == 0);
+    EXPECT(cols[1] == 480);
+    EXPECT(cols[2] == 960);
+    EXPECT(cols[3] == 1280);
+    std::vector<int> small = TileStarts(480, 640, 480);
+    EXPECT(small.size() == 1);
+    EXPECT(small[0] == 0);
 }
 
 void TestConfigAndCommand() {
@@ -302,7 +335,12 @@ void TestConfigAndCommand() {
         std::cerr << error << std::endl;
     }
     EXPECT(loaded.counter.class_ids.size() == 1);
-    EXPECT(loaded.counter.class_ids[0] == 19);
+    EXPECT(loaded.counter.class_ids[0] == 0);
+    std::string model = "models/aerial_cattle_yolov8m.onnx.gz";
+    if (example.find('/') != std::string::npos) {
+        model = "cattle/models/aerial_cattle_yolov8m.onnx.gz";
+    }
+    EXPECT(loaded.onnx_model == model);
     EXPECT(loaded.counter.dfov_deg == 82.0);
     EXPECT(loaded.email_on_exit);
     EXPECT(!loaded.ground_altitude_set);
@@ -327,6 +365,27 @@ void TestConfigAndCommand() {
     EXPECT(std::fabs(loaded.ground_altitude_m - 123.5) < 1e-6);
     EXPECT(loaded.onnx_model == "/tmp/cattle.onnx");
     EXPECT(loaded.counter.dfov_deg == 82.0);
+
+    const char *relative_path = "/tmp/cattle-config-rel.json";
+    std::ofstream relative(relative_path);
+    relative << "{\n\"onnx_model\": \"models/foo.onnx\"\n}\n";
+    relative.close();
+    EXPECT(LoadCattleAppConfig(relative_path, &loaded, &error));
+    EXPECT(loaded.onnx_model == "/tmp/models/foo.onnx");
+
+    std::string shipped = "models/aerial_cattle_yolov8m.onnx.gz";
+    std::ifstream packed(shipped.c_str(), std::ios::binary);
+    if (!packed) {
+        shipped = "cattle/models/aerial_cattle_yolov8m.onnx.gz";
+        packed.open(shipped.c_str(), std::ios::binary);
+    }
+    EXPECT(packed.good());
+    char magic[2] = {0, 0};
+    packed.read(magic, 2);
+    EXPECT(static_cast<unsigned char>(magic[0]) == 0x1f);
+    EXPECT(static_cast<unsigned char>(magic[1]) == 0x8b);
+    packed.seekg(0, std::ios::end);
+    EXPECT(packed.tellg() > 50 * 1000 * 1000);
 
     setenv("CATTLE_CONFIG", example.c_str(), 1);
     EXPECT(FindCattleConfigPath() == example);

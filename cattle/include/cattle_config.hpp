@@ -24,6 +24,7 @@ CattleAppConfig DefaultCattleAppConfig();
 
 // Reads the flat JSON object used by both the counter and send_report.py.
 // Unknown keys are ignored so SMTP settings can live in the same file.
+// A relative onnx_model is resolved against the directory that contains path.
 bool LoadCattleAppConfig(const std::string &path, CattleAppConfig *config, std::string *error);
 
 // $CATTLE_CONFIG, then ./cattle/config.json, then /open_app/cattle_config.json,

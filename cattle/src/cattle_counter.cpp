@@ -276,6 +276,75 @@ std::vector<CattleDetection> ParseYoloV8(const float *data,
     return found;
 }
 
+LetterboxFit FitLetterbox(int src_w, int src_h, int dst) {
+    LetterboxFit fit;
+    fit.scale = 1.0f;
+    fit.pad_x = 0.0f;
+    fit.pad_y = 0.0f;
+    fit.resized_w = src_w;
+    fit.resized_h = src_h;
+    if (src_w <= 0 || src_h <= 0 || dst <= 0) {
+        return fit;
+    }
+    float scale = std::min(static_cast<float>(dst) / static_cast<float>(src_w),
+                           static_cast<float>(dst) / static_cast<float>(src_h));
+    int nw = static_cast<int>(std::lround(static_cast<float>(src_w) * scale));
+    int nh = static_cast<int>(std::lround(static_cast<float>(src_h) * scale));
+    if (nw < 1) {
+        nw = 1;
+    }
+    if (nh < 1) {
+        nh = 1;
+    }
+    if (nw > dst) {
+        nw = dst;
+    }
+    if (nh > dst) {
+        nh = dst;
+    }
+    fit.scale = scale;
+    fit.pad_x = static_cast<float>((dst - nw) / 2);
+    fit.pad_y = static_cast<float>((dst - nh) / 2);
+    fit.resized_w = nw;
+    fit.resized_h = nh;
+    return fit;
+}
+
+void MapLetterboxDetection(CattleDetection *detection,
+                           const LetterboxFit &fit,
+                           float origin_x,
+                           float origin_y) {
+    if (!detection || fit.scale <= 0.0f) {
+        return;
+    }
+    detection->cx = (detection->cx - fit.pad_x) / fit.scale + origin_x;
+    detection->cy = (detection->cy - fit.pad_y) / fit.scale + origin_y;
+    detection->w /= fit.scale;
+    detection->h /= fit.scale;
+}
+
+std::vector<int> TileStarts(int length, int tile, int stride) {
+    std::vector<int> starts;
+    if (length <= 0 || tile <= 0) {
+        return starts;
+    }
+    if (stride < 1) {
+        stride = tile;
+    }
+    if (length <= tile) {
+        starts.push_back(0);
+        return starts;
+    }
+    for (int pos = 0; pos + tile < length; pos += stride) {
+        starts.push_back(pos);
+    }
+    int last = length - tile;
+    if (starts.empty() || starts.back() != last) {
+        starts.push_back(last);
+    }
+    return starts;
+}
+
 std::vector<CattleDetection> NonMaxSuppression(const std::vector<CattleDetection> &boxes, float iou_thres) {
     std::vector<CattleDetection> ordered = boxes;
     std::sort(ordered.begin(), ordered.end(), [](const CattleDetection &a, const CattleDetection &b) {

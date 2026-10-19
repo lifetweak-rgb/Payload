@@ -119,6 +119,29 @@ std::vector<CattleDetection> ParseYoloV8(const float *data,
 std::vector<CattleDetection> NonMaxSuppression(const std::vector<CattleDetection> &boxes,
                                                float iou_thres);
 
+// Letterbox used by the aerial YOLOv8 model. The network input is square;
+// the source is resized with unchanged aspect ratio and centered on a pad.
+struct LetterboxFit {
+    float scale;
+    float pad_x;
+    float pad_y;
+    int resized_w;
+    int resized_h;
+};
+
+LetterboxFit FitLetterbox(int src_w, int src_h, int dst);
+
+// Maps a box from letterboxed network pixels back onto the source image.
+// origin_x and origin_y are the source-image origin of this tile.
+void MapLetterboxDetection(CattleDetection *detection,
+                           const LetterboxFit &fit,
+                           float origin_x,
+                           float origin_y);
+
+// Tile origins that cover [0, length). The last origin is length - tile when
+// the span is longer than one tile, so the far edge is included.
+std::vector<int> TileStarts(int length, int tile, int stride);
+
 class CattleCounter {
  public:
     explicit CattleCounter(const CattleOptions &options);

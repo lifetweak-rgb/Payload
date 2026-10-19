@@ -296,6 +296,38 @@ bool FileExists(const std::string &path) {
     return input.good();
 }
 
+std::string ParentDirectory(const std::string &path) {
+    size_t slash = path.find_last_of('/');
+    if (slash == std::string::npos) {
+        return ".";
+    }
+    if (slash == 0) {
+        return "/";
+    }
+    return path.substr(0, slash);
+}
+
+std::string JoinRelative(const std::string &dir, const std::string &rel) {
+    std::string clean = rel;
+    if (clean.size() >= 2 && clean[0] == '.' && clean[1] == '/') {
+        clean = clean.substr(2);
+    }
+    if (dir.empty() || dir == ".") {
+        return clean;
+    }
+    if (dir == "/") {
+        return "/" + clean;
+    }
+    return dir + "/" + clean;
+}
+
+void ResolveOnnxModel(CattleAppConfig *config) {
+    if (!config || config->onnx_model.empty() || config->onnx_model[0] == '/') {
+        return;
+    }
+    config->onnx_model = JoinRelative(ParentDirectory(config->config_path), config->onnx_model);
+}
+
 }  // namespace
 
 CattleAppConfig DefaultCattleAppConfig() {
@@ -341,6 +373,7 @@ bool LoadCattleAppConfig(const std::string &path, CattleAppConfig *config, std::
             return false;
         }
     }
+    ResolveOnnxModel(config);
     return true;
 }
 
