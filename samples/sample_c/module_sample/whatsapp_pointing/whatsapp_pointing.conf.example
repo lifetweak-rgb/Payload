@@ -1,0 +1,7 @@
+# Copy this file to /open_app/whatsapp_pointing.conf on Manifold 3.
+# The WhatsApp Business number must already be a member of the group.
+# group_id is the id returned by the WhatsApp Cloud API Groups API.
+access_token=your_access_token
+phone_number_id=your_phone_number_id
+group_id=your_group_id
+graph_version=v21.0
