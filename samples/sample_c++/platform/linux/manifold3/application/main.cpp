@@ -46,6 +46,7 @@
 #include "camera_manager/test_camera_manager_entry.h"
 #include <hms_manager/hms_manager_entry.h>
 #include <liveview/dji_liveview_object_detection.hpp>
+#include "cattle/cattle_payload.hpp"
 #include "liveview/test_liveview.h"
 #include "positioning/test_positioning_entry.h"
 #include <signal.h>
@@ -83,6 +84,7 @@ start:
         << "| [f] Start rtk positioning sample - you can receive rtk rtcm data when rtk signal is ok           |\n"
         << "| [g] Request Lidar data sample - Request Lidar data and store the point cloud data as pcd files   |\n"
         << "| [h] Request Radar data sample - Request radar data                                               |\n"
+        << "| [c] Cattle counter - count cattle on the Matrice 4T wide camera and email the total          |\n"
         << "| [i] Run manifold3 AI sample - request h.264 bitstream data, codec it and display it on pilot(DPK required; workflow demo only.)|\n"
         << "| [j] Run Hms Enhance sample - shake motor and play sound on pilot                                 |\n"
         << "| [l] Run widget states manager sample, control widget states on other payload                     |\n"
@@ -127,6 +129,9 @@ start:
             break;
         case 'h':
             DjiUser_RunRadarDataSubscriptionSample();
+            break;
+        case 'c':
+            DjiUser_RunCattleCountSample();
             break;
         case 'i':
             DjiUser_RunCameraAiDetectionSample();
