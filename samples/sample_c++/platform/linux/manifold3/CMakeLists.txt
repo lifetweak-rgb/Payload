@@ -19,9 +19,12 @@ include_directories(../../../../sample_c/module_sample)
 include_directories(../common)
 include_directories(../manifold3/application)
 include_directories(${CMAKE_CURRENT_LIST_DIR}/../../../../../psdk_lib/include)
+include_directories(${CMAKE_CURRENT_LIST_DIR}/../../../../../cattle/include)
 
 file(GLOB_RECURSE MODULE_SAMPLE_SRC
         ../../../module_sample/liveview/*.c*
+        ../../../module_sample/cattle/*.c*
+        ../../../../../cattle/src/*.cpp
         ../../../module_sample/camera_manager/*.c*
         ../../../module_sample/hms_manager/*.c*
         ../../../module_sample/perception/*.c*
